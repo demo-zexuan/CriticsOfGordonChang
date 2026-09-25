@@ -24,6 +24,9 @@ wrangler.local.jsonc
 *.p12
 secrets.*
 
+# local database dumps (contain real user data / encrypted tokens)
+backups/
+
 # build artifacts
 coverage/
 *.log
