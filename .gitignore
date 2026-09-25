@@ -11,9 +11,10 @@ node_modules/
 !.env.example
 !.dev.vars.example
 
-# real project config should stay local
-wrangler.toml
-!wrangler.example.toml
+# wrangler.jsonc is committed on purpose (it holds no secrets).
+# Only local overrides stay untracked.
+wrangler.local.toml
+wrangler.local.jsonc
 *.local.toml
 
 # cloud secrets / credentials

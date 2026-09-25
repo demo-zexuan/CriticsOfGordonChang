@@ -1,0 +1,13 @@
+# Single-package repo.
+#
+# The `packages` field must be present: pnpm 10 rejects a settings-only
+# workspace file during `pnpm install --frozen-lockfile`, which is exactly what
+# Cloudflare's build environment runs ("packages field missing or empty").
+packages:
+  - "."
+
+# pnpm 10 blocks dependency build scripts by default. esbuild and workerd need
+# theirs to link the right platform binary.
+allowBuilds:
+  esbuild: true
+  workerd: true

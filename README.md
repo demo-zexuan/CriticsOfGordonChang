@@ -125,10 +125,14 @@ pnpm run check
 
 ## ☁️ Cloudflare configuration
 
-Copy the templates before filling real values:
+The Worker config lives in `wrangler.jsonc`, which is **committed on purpose** —
+it holds only non-secret settings (name, cron trigger, non-secret vars and the D1
+binding). Credentials never belong in it. Cloudflare's build environment checks
+out the repo, so a gitignored config would make `wrangler deploy` fail.
+
+Copy the local env template before filling real values:
 
 ```bash
-cp wrangler.example.toml wrangler.toml
 cp .dev.vars.example .dev.vars
 ```
 
@@ -239,15 +243,15 @@ This repo is intended for public GitHub hosting, but secrets must stay local.
 
 Use:
 
-- `.dev.vars` for local runtime values
-- `wrangler.toml` only locally or in a protected environment
-- template files in GitHub instead of real config
+- `.dev.vars` for local runtime values (never committed)
+- Worker Secrets in Cloudflare for production credentials
+- `wrangler.jsonc` in Git — it carries no secrets, only non-secret settings
 
 The repo includes:
 
 - [.gitignore](.gitignore)
 - [.dev.vars.example](.dev.vars.example)
-- [wrangler.example.toml](wrangler.example.toml)
+- [wrangler.jsonc](wrangler.jsonc)
 
 ---
 

@@ -726,11 +726,25 @@ async function oauthCallback(request: Request, env: Env): Promise<Response> {
 
 async function health(env: Env): Promise<Response> {
   const db = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+
+  // Presence-only self check: never echo credential values.
+  const bindings = {
+    DB: Boolean(env.DB),
+    X_CLIENT_ID: Boolean(env.X_CLIENT_ID),
+    X_CLIENT_SECRET: Boolean(env.X_CLIENT_SECRET),
+    TELEGRAM_BOT_TOKEN: Boolean(env.TELEGRAM_BOT_TOKEN),
+    TELEGRAM_ADMIN_CHAT_ID: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
+    TELEGRAM_WEBHOOK_SECRET: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+    APP_ENCRYPTION_KEY: Boolean(env.APP_ENCRYPTION_KEY),
+  };
+
   return json({
     ok: db?.ok === 1,
     target: env.TARGET_USERNAME,
     cron: "*/5 * * * * (UTC)",
     mockeries_available: criticsList.length,
+    bindings,
+    bindings_ready: Object.values(bindings).every(Boolean),
   });
 }
 

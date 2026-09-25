@@ -1,0 +1,35 @@
+{
+  // Cloudflare Worker configuration.
+  //
+  // This file IS committed on purpose: it contains no secrets.
+  // Credentials live in `.dev.vars` locally and in Worker Secrets in production.
+  // Cloudflare's build environment checks out the repo, so the config must be
+  // in Git — otherwise `wrangler deploy` cannot resolve `main`.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "critics-of-gordon-chang",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "preview_urls": false,
+
+  // Non-secret runtime settings.
+  "vars": {
+    "TARGET_USERNAME": "GordonGChang",
+    "CRITICS_LOOKBACK_DAYS": "7",
+    "POLL_MAX_RESULTS": "20",
+    "PUBLIC_BASE_URL": "https://critics-of-gordon-chang.pengzexuan2001.workers.dev"
+  },
+
+  // Every 5 minutes (UTC).
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "critics-of-gordon-chang",
+      "database_id": "5c6ac6e3-e0fe-4622-a16f-cda3e7b43059",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
