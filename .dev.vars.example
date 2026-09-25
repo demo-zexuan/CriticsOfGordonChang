@@ -1,0 +1,19 @@
+# Copy this file to .dev.vars for local Worker development.
+# Do not commit .dev.vars to Git.
+
+X_CLIENT_ID="your_x_client_id"
+X_CLIENT_SECRET="your_x_client_secret"
+
+TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
+TELEGRAM_ADMIN_CHAT_ID="your_telegram_admin_chat_id"
+TELEGRAM_WEBHOOK_SECRET="your_telegram_webhook_secret"
+
+APP_ENCRYPTION_KEY="your_32_byte_base64url_key"
+OPENAI_API_KEY="your_openai_api_key_if_used"
+
+# Optional local overrides
+TARGET_USERNAME="CriticsOfGordonChang"
+PUBLIC_BASE_URL="http://localhost:8787"
+TARGET_LOOKBACK_DAYS="30"
+POLL_MAX_RESULTS="20"
+OPENAI_MODEL="gpt-5.6-luna"

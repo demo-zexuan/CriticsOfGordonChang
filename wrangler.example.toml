@@ -1,0 +1,18 @@
+name = "critics-of-gordon-chang"
+main = "src/index.ts"
+compatibility_date = "2026-09-25"
+
+[vars]
+TARGET_USERNAME = "CriticsOfGordonChang"
+TARGET_LOOKBACK_DAYS = "30"
+POLL_MAX_RESULTS = "20"
+OPENAI_MODEL = "gpt-5.6-luna"
+PUBLIC_BASE_URL = "https://your-worker.your-subdomain.workers.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "critics-of-gordon-chang"
+database_id = "replace-with-your-d1-database-id"
+
+[triggers]
+crons = ["*/5 * * * *"]

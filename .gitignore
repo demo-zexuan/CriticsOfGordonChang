@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# local runtime / Cloudflare
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
+!.dev.vars.example
+
+# real project config should stay local
+wrangler.toml
+!wrangler.example.toml
+*.local.toml
+
+# cloud secrets / credentials
+*.pem
+*.key
+*.crt
+*.p12
+secrets.*
+
+# build artifacts
+coverage/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# local secrets / generated state
+*.sqlite
+*.db
+*.db-journal
