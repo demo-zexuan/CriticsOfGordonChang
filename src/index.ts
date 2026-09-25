@@ -755,9 +755,23 @@ export default {
     ctx: ExecutionContext
   ): Promise<void> {
     ctx.waitUntil(
-      processMockeryRound(env).catch((error) => {
-        console.error("Cron failed:", error);
-      })
+      (async () => {
+        const result = await processMockeryRound(env);
+
+        if (result.mocked) {
+          // Report successes so the cron is observable from Telegram.
+          await notifyMockeryResult(env, result).catch((error) => {
+            console.error("Cron notify failed:", error);
+          });
+          return;
+        }
+
+        // Failures are logged only: a persistent problem (for example X not
+        // authorized) would otherwise send a message every 5 minutes.
+        if (result.error) {
+          console.error("Cron round failed:", result.error);
+        }
+      })()
     );
   },
 
