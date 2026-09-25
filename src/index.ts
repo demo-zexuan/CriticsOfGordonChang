@@ -1,8 +1,10 @@
+import criticsList from './critics.json';
+
 interface Env {
   DB: D1Database;
 
   TARGET_USERNAME: string;
-  TARGET_LOOKBACK_DAYS?: string;
+  CRITICS_LOOKBACK_DAYS?: string;
   POLL_MAX_RESULTS?: string;
   PUBLIC_BASE_URL: string;
 
@@ -35,15 +37,9 @@ type XUser = {
   username?: string;
 };
 
-type Fact = {
-  id: number;
-  topic: string;
-  year: number;
-  summary: string;
-  keywords: string;
-  source_title: string;
-  source_url: string;
-  priority: number;
+type Mockery = {
+  zh: string;
+  en: string;
 };
 
 const X_API = "https://api.x.com";
@@ -267,99 +263,6 @@ async function xFetch(path: string, accessToken: string, init?: RequestInit): Pr
   return fetch(`${X_API}${path}`, { ...init, headers });
 }
 
-async function upsertTargetPost(env: Env, post: XPost, summoned: boolean): Promise<boolean> {
-  const url = `https://x.com/${env.TARGET_USERNAME}/status/${post.id}`;
-
-  const result = await env.DB.prepare(
-    `INSERT OR IGNORE INTO target_posts(post_id,created_at,text,url,summoned)
-     VALUES(?,?,?,?,?)`
-  ).bind(
-    post.id,
-    post.created_at ?? new Date().toISOString(),
-    post.text,
-    url,
-    summoned ? 1 : 0
-  ).run();
-
-  return Boolean(result.meta.changes);
-}
-
-async function getKnownLatestPostId(env: Env): Promise<string | null> {
-  const row = await env.DB.prepare(
-    "SELECT post_id FROM target_posts ORDER BY created_at DESC LIMIT 1"
-  ).first<{ post_id: string }>();
-  return row?.post_id ?? null;
-}
-
-async function determineSummoned(
-  env: Env,
-  post: XPost,
-  includedTweets: XPost[]
-): Promise<boolean> {
-  const me = await getAuthenticatedUser(env);
-  const meUsername = (me.username ?? "").toLowerCase();
-
-  const mentioned = (post.entities?.mentions ?? []).some(
-    (m) => (m.username ?? "").toLowerCase() === meUsername
-  );
-  if (mentioned) return true;
-
-  if (post.in_reply_to_user_id === me.id) return true;
-
-  const referenced = post.referenced_tweets ?? [];
-  for (const ref of referenced) {
-    if (ref.type !== "quoted") continue;
-    const quoted = includedTweets.find((t) => t.id === ref.id);
-    if (quoted?.author_id === me.id) return true;
-  }
-
-  return false;
-}
-
-async function fetchTargetPosts(env: Env): Promise<{ posts: XPost[]; includesTweets: XPost[] }> {
-  const userId = await getTargetUserId(env);
-  const token = await getAccessToken(env);
-  const latestId = await getKnownLatestPostId(env);
-
-  const qs = new URLSearchParams({
-    max_results: String(Math.min(Math.max(Number(env.POLL_MAX_RESULTS ?? "20"), 5), 100)),
-    exclude: "retweets",
-    "tweet.fields": [
-      "id",
-      "text",
-      "created_at",
-      "author_id",
-      "conversation_id",
-      "in_reply_to_user_id",
-      "entities",
-      "referenced_tweets"
-    ].join(","),
-    expansions: "referenced_tweets.id",
-  });
-
-  if (latestId) qs.set("since_id", latestId);
-
-  const r = await xFetch(`/2/users/${userId}/tweets?${qs.toString()}`, token);
-  const data = await r.json() as {
-    data?: XPost[];
-    includes?: { tweets?: XPost[] };
-    errors?: unknown;
-    meta?: unknown;
-  };
-
-  if (!r.ok) throw new Error(`X timeline lookup failed: ${JSON.stringify(data)}`);
-
-  return {
-    posts: data.data ?? [],
-    includesTweets: data.includes?.tweets ?? [],
-  };
-}
-
-function compact(text: string, max = 900): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return normalized.length > max ? normalized.slice(0, max - 1) + "…" : normalized;
-}
-
 function logStructured(level: "info" | "warn" | "error", event: string, context: Record<string, unknown> = {}): void {
   const payload = {
     ts: new Date().toISOString(),
@@ -381,205 +284,166 @@ function logStructured(level: "info" | "warn" | "error", event: string, context:
   console.log(JSON.stringify(payload));
 }
 
-const GORDON_CHANG_TARGET_PATTERNS = [
-  "gordongchang",
-  "gordon chang",
-  "gordon g chang",
-  "gordonchang",
-  "章家敦",
-  "@gordongchang",
-  "@gordonchang",
-];
-
-const MOCKERY_PATTERNS = [
-  "laughable",
-  "ridiculous",
-  "nonsense",
-  "absurd",
-  "failed",
-  "failure",
-  "wrong",
-  "clown",
-  "stupid",
-  "foolish",
-  "笑死",
-  "荒唐",
-  "可笑",
-  "失败",
-  "失算",
-  "笑话",
-  "糊弄",
-  "蠢",
-  "荒谬",
-  "误导",
-  "骗人",
-  "屎",
-  "无知",
-  "可怜",
-  "失败者",
-];
-
-function normalizeForMatch(value: string): string {
-  return value.toLowerCase().replace(/[@#]/g, " ").replace(/[^a-z0-9\u4e00-\u9fff\s]/g, " ").replace(/\s+/g, " ").trim();
+function getLookubackDays(env: Env): number {
+  const value = Number(env.CRITICS_LOOKBACK_DAYS ?? "7");
+  return Number.isFinite(value) && value > 0 ? Math.min(value, 365) : 7;
 }
 
-function isTargetingGordonChang(text: string, targetUsername?: string): boolean {
-  const normalized = normalizeForMatch(text);
-  const targetName = normalizeForMatch(targetUsername ?? "");
-
-  if (targetName && normalized.includes(targetName)) return true;
-  return GORDON_CHANG_TARGET_PATTERNS.some((pattern) => normalized.includes(pattern));
+function getRandomMockery(): Mockery {
+  const idx = Math.floor(Math.random() * criticsList.length);
+  return criticsList[idx] as Mockery;
 }
 
-function isLikelyMockery(text: string): boolean {
-  const normalized = normalizeForMatch(text);
-  return MOCKERY_PATTERNS.some((pattern) => normalized.includes(pattern));
-}
+async function fetchTargetPosts(env: Env): Promise<XPost[]> {
+  const userId = await getTargetUserId(env);
+  const token = await getAccessToken(env);
 
-function getLookbackDays(env: Env): number {
-  const value = Number(env.TARGET_LOOKBACK_DAYS ?? "30");
-  return Number.isFinite(value) && value > 0 ? Math.min(value, 365) : 30;
-}
+  const qs = new URLSearchParams({
+    max_results: String(Math.min(Math.max(Number(env.POLL_MAX_RESULTS ?? "20"), 5), 100)),
+    exclude: "retweets",
+    "tweet.fields": [
+      "id",
+      "text",
+      "created_at",
+      "author_id",
+      "conversation_id",
+      "in_reply_to_user_id",
+      "entities",
+      "referenced_tweets"
+    ].join(","),
+  });
 
-async function getRecentMockeryWindow(env: Env): Promise<number> {
-  const windowMs = getLookbackDays(env) * 24 * 60 * 60 * 1000;
-  return Math.floor((Date.now() - windowMs) / 1000);
-}
-
-async function upsertMyPost(env: Env, postId: string, text: string, createdAt: string, url: string): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO my_posts(post_id,text,created_at,url,processed_at)
-     VALUES(?,?,?,?,unixepoch())
-     ON CONFLICT(post_id) DO UPDATE SET
-       text=excluded.text,
-       created_at=excluded.created_at,
-       url=excluded.url,
-       processed_at=unixepoch()`
-  ).bind(postId, text, createdAt, url).run();
-}
-
-async function recordMyMockeryDecision(
-  env: Env,
-  myPostId: string,
-  targetAccount: string,
-  text: string,
-  matchedKeywords: string[],
-  isMocking: boolean,
-  confidence: number
-): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO my_mockery_history(my_post_id,target_account,matched_keywords,is_mocking,confidence,created_at,processed_at)
-     VALUES(?,?,?,?,?,?,unixepoch())
-     ON CONFLICT(my_post_id) DO UPDATE SET
-       target_account=excluded.target_account,
-       matched_keywords=excluded.matched_keywords,
-       is_mocking=excluded.is_mocking,
-       confidence=excluded.confidence,
-       processed_at=unixepoch()`
-  ).bind(
-    myPostId,
-    targetAccount,
-    matchedKeywords.join(","),
-    isMocking ? 1 : 0,
-    confidence,
-    Math.floor(Date.now() / 1000)
-  ).run();
-
-  if (isMocking) {
-    logStructured("info", "mockery_history_recorded", {
-      my_post_id: myPostId,
-      target_account: targetAccount,
-      matched_keywords: matchedKeywords,
-      confidence,
-      snippet: text.slice(0, 120),
-    });
-  }
-}
-
-async function hasRecentMockeryForTarget(env: Env, targetAccount: string): Promise<boolean> {
-  const cutoff = await getRecentMockeryWindow(env);
-  const row = await env.DB.prepare(
-    `SELECT 1 AS hit
-     FROM my_mockery_history h
-     JOIN my_posts p ON p.post_id = h.my_post_id
-     WHERE h.target_account = ?
-       AND h.is_mocking = 1
-       AND p.created_at >= datetime(?,'unixepoch')
-     LIMIT 1`
-  ).bind(targetAccount, String(cutoff)).first<{ hit: number }>();
-
-  return Boolean(row?.hit);
-}
-
-async function classifyMyHistoryForTarget(env: Env, postId: string, text: string, createdAt: string): Promise<void> {
-  const targetAccount = env.TARGET_USERNAME;
-  const url = `https://x.com/i/web/status/${postId}`;
-  await upsertMyPost(env, postId, text, createdAt, url);
-
-  const normalized = normalizeForMatch(text);
-  const keywords = GORDON_CHANG_TARGET_PATTERNS.filter((k) => normalized.includes(k));
-  const isTargeted = isTargetingGordonChang(text, targetAccount);
-  const isMocking = isTargeted && isLikelyMockery(text);
-
-  if (!isTargeted && !isMocking) return;
-
-  const matched = Array.from(new Set([...keywords, ...MOCKERY_PATTERNS.filter((k) => normalized.includes(k))]));
-  const confidence = Math.min(1, 0.5 + matched.length * 0.1 + (isMocking ? 0.2 : 0));
-
-  await recordMyMockeryDecision(
-    env,
-    postId,
-    targetAccount,
-    text,
-    matched,
-    isMocking,
-    confidence
-  );
-}
-
-async function getRelevantFacts(env: Env, postText: string): Promise<Fact[]> {
-  const rows = await env.DB.prepare(
-    "SELECT id,topic,year,summary,keywords,source_title,source_url,priority FROM facts ORDER BY priority DESC, id ASC"
-  ).all<Fact>();
-
-  const t = postText.toLowerCase();
-  return (rows.results ?? []).filter((fact) => {
-    const keywords = fact.keywords
-      .split(",")
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean);
-
-    return keywords.some((k) => t.includes(k));
-  }).slice(0, 6);
-}
-
-function fallbackDraft(post: XPost, facts: Fact[]): { zh: string; en: string } {
-  if (facts.length > 0) {
-    const f = facts[0];
-    return {
-      zh: `⏰ 又到了核对旧预测的时间：${f.year}年的公开记录给出了明确时间点。日期已经过去，原始来源还在。`,
-      en: `⏰ Time for a forecast check: the ${f.year} record gave a specific timeline. The date has passed; the source is still there.`,
-    };
-  }
-
-  return {
-    zh: `🔎 先看原文、日期和后来发生的事情。预测可以大胆，核验还是要看记录。`,
-    en: `🔎 Check the original claim, the date, and what happened afterward. Bold forecasts still need to be tested against the record.`,
+  const r = await xFetch(`/2/users/${userId}/tweets?${qs.toString()}`, token);
+  const data = await r.json() as {
+    data?: XPost[];
+    errors?: unknown;
+    meta?: unknown;
   };
+
+  if (!r.ok) throw new Error(`X timeline lookup failed: ${JSON.stringify(data)}`);
+
+  return data.data ?? [];
 }
 
-async function generateDraft(
+async function findUnmockedPost(env: Env): Promise<XPost | null> {
+  const lookbackDays = getLookubackDays(env);
+  const cutoffTime = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const posts = await fetchTargetPosts(env);
+
+  for (const post of posts) {
+    if (!post.created_at || post.created_at < cutoffTime) continue;
+
+    // Check if already mocked
+    const record = await env.DB.prepare(
+      `SELECT id FROM mockery_records WHERE target_post_id = ?`
+    ).bind(post.id).first<{ id: number }>();
+
+    if (!record) {
+      return post;
+    }
+  }
+
+  return null;
+}
+
+async function recordGordonPost(env: Env, post: XPost): Promise<void> {
+  const url = `https://x.com/${env.TARGET_USERNAME}/status/${post.id}`;
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO gordon_chang_posts(post_id,author_id,text,created_at,url,last_checked_at)
+     VALUES(?,?,?,?,?,unixepoch())`
+  ).bind(
+    post.id,
+    post.author_id ?? "",
+    post.text,
+    post.created_at ?? new Date().toISOString(),
+    url
+  ).run();
+}
+
+async function publishMockery(
   env: Env,
   post: XPost,
-  facts: Fact[]
-): Promise<{ zh: string; en: string }> {
-  return fallbackDraft(post, facts);
+  mockery: Mockery
+): Promise<{ id: string }> {
+  const token = await getAccessToken(env);
+
+  // Try English first (usually more likely to be understood broadly)
+  let text = mockery.en;
+  if (!isLikelyWithinXLimit(text)) {
+    text = mockery.zh;
+  }
+
+  if (!isLikelyWithinXLimit(text)) {
+    throw new Error("Mockery text too long for X limits");
+  }
+
+  const r = await xFetch("/2/tweets", token, {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      reply: { in_reply_to_tweet_id: post.id }
+    }),
+  });
+
+  const data = await r.json() as { data?: { id?: string }; errors?: unknown };
+  if (!r.ok || !data.data?.id) {
+    logStructured("error", "x_publish_failed", {
+      post_id: post.id,
+      response: data,
+      status: r.status,
+    });
+    throw new Error(`X publish failed: ${JSON.stringify(data)}`);
+  }
+
+  return { id: data.data.id };
 }
 
-function isLikelyWithinXLimit(text: string): boolean {
-  // Conservative pre-check. X's official character weighting is more nuanced;
-  // this intentionally rejects obviously long drafts rather than silently truncating them.
-  return text.length <= 260;
+async function recordMockery(
+  env: Env,
+  targetPostId: string,
+  ourPostId: string,
+  mockery: Mockery
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO mockery_records(target_post_id,our_post_id,mockery_text_zh,mockery_text_en)
+     VALUES(?,?,?,?)`
+  ).bind(targetPostId, ourPostId, mockery.zh, mockery.en).run();
+}
+
+async function processMockeryRound(env: Env): Promise<{ mocked: boolean; postId?: string; error?: string }> {
+  try {
+    const post = await findUnmockedPost(env);
+
+    if (!post) {
+      logStructured("info", "no_unmocked_posts_found", {
+        target_username: env.TARGET_USERNAME,
+      });
+      return { mocked: false };
+    }
+
+    await recordGordonPost(env, post);
+
+    const mockery = getRandomMockery();
+    const published = await publishMockery(env, post, mockery);
+    await recordMockery(env, post.id, published.id, mockery);
+
+    logStructured("info", "mockery_published", {
+      target_post_id: post.id,
+      our_post_id: published.id,
+      target_username: env.TARGET_USERNAME,
+    });
+
+    return { mocked: true, postId: post.id };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logStructured("error", "mockery_processing_failed", {
+      error: errorMsg,
+      target_username: env.TARGET_USERNAME,
+    });
+    return { mocked: false, error: errorMsg };
+  }
 }
 
 async function sendTelegram(
@@ -598,273 +462,26 @@ async function sendTelegram(
   return data;
 }
 
-async function sendNewPostNotice(
+async function notifyMockeryResult(
   env: Env,
-  post: XPost,
-  summoned: boolean,
-  draft: { zh: string; en: string },
-  facts: Fact[]
+  result: { mocked: boolean; postId?: string; error?: string }
 ): Promise<void> {
-  const sources = facts.length
-    ? "\n\nSources:\n" + facts.map(f => `• ${f.year} — ${f.source_title}\n${f.source_url}`).join("\n")
-    : "\n\nSources: none matched in local database.";
-
-  const warning = summoned
-    ? "✅ This post appears to have summoned your account. The bot will publish a direct reply automatically."
-    : "⚠️ This post does NOT appear to have summoned your account; it will be recorded without publishing.";
-
-  const text = [
-    "🚨 New target post",
-    "",
-    `@${env.TARGET_USERNAME}`,
-    post.created_at ?? "",
-    post.text,
-    "",
-    `🔗 https://x.com/${env.TARGET_USERNAME}/status/${post.id}`,
-    "",
-    warning,
-    "",
-    "🇨🇳 Draft",
-    draft.zh,
-    "",
-    "🇺🇸 Draft",
-    draft.en,
-    sources,
-  ].join("\n");
-
-  await sendTelegram(env, "sendMessage", {
-    chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
-    text,
-    disable_web_page_preview: true,
-  });
-
-  logStructured("info", "telegram_notice_sent", {
-    post_id: post.id,
-    target_username: env.TARGET_USERNAME,
-    summoned,
-    fact_count: facts.length,
-    draft_len_zh: draft.zh.length,
-    draft_len_en: draft.en.length,
-  });
-}
-
-async function saveDraft(
-  env: Env,
-  post: XPost,
-  draft: { zh: string; en: string },
-  facts: Fact[]
-): Promise<void> {
-  const factIds = facts.map(f => f.id).join(",");
-  await env.DB.prepare(
-    `INSERT INTO drafts(post_id,zh,en,matched_fact_ids,status,created_at,updated_at)
-     VALUES(?,?,?,?, 'pending', unixepoch(), unixepoch())
-     ON CONFLICT(post_id) DO UPDATE SET
-       zh=excluded.zh,
-       en=excluded.en,
-       matched_fact_ids=excluded.matched_fact_ids,
-       updated_at=unixepoch()`
-  ).bind(post.id, draft.zh, draft.en, factIds).run();
-}
-
-async function processNewPosts(env: Env): Promise<{ count: number }> {
-  const { posts, includesTweets } = await fetchTargetPosts(env);
-
-  const initialized = await getSetting(env, "initialized");
-  const newPosts: XPost[] = [];
-
-  logStructured("info", "poll_cycle_started", {
-    target_username: env.TARGET_USERNAME,
-    fetched_post_count: posts.length,
-    initialized: Boolean(initialized),
-    lookback_days: getLookbackDays(env),
-  });
-
-  for (const post of [...posts].sort((a, b) =>
-    String(a.created_at).localeCompare(String(b.created_at))
-  )) {
-    const summoned = await determineSummoned(env, post, includesTweets);
-    const inserted = await upsertTargetPost(env, post, summoned);
-
-    if (!inserted) {
-      logStructured("info", "post_skipped_duplicate", {
-        post_id: post.id,
-        target_username: env.TARGET_USERNAME,
-      });
-      continue;
-    }
-    newPosts.push(post);
-
-    logStructured("info", "target_post_detected", {
-      post_id: post.id,
-      target_username: env.TARGET_USERNAME,
-      summoned,
-      created_at: post.created_at,
+  if (result.mocked) {
+    await sendTelegram(env, "sendMessage", {
+      chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
+      text: `✅ Mocked Gordon Chang's post ${result.postId}
+https://x.com/${env.TARGET_USERNAME}/status/${result.postId}`,
     });
-
-    // On first run, record recent posts but do not generate notifications.
-    if (!initialized) continue;
-
-    const facts = await getRelevantFacts(env, post.text);
-    const draft = await generateDraft(env, post, facts);
-    await saveDraft(env, post, draft, facts);
-    await sendNewPostNotice(env, post, summoned, draft, facts);
-
-    if (summoned) {
-      try {
-        const published = await publishReply(env, post.id, "en");
-        await sendTelegram(env, "sendMessage", {
-          chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
-          text: `✅ Auto-published English reply:\nhttps://x.com/i/web/status/${published.id}`,
-        });
-
-        logStructured("info", "auto_reply_published", {
-          post_id: post.id,
-          language: "en",
-          published_post_id: published.id,
-          target_username: env.TARGET_USERNAME,
-        });
-      } catch (error) {
-        logStructured("error", "auto_reply_publish_failed", {
-          post_id: post.id,
-          error: error instanceof Error ? error.message : String(error),
-          target_username: env.TARGET_USERNAME,
-        });
-
-        await sendTelegram(env, "sendMessage", {
-          chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
-          text: `❌ Auto-publish failed:\n${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
-    }
-
-    logStructured("info", "draft_ready_for_publish", {
-      post_id: post.id,
-      summoned,
-      fact_count: facts.length,
-      draft_len_zh: draft.zh.length,
-      draft_len_en: draft.en.length,
+  } else if (result.error) {
+    await sendTelegram(env, "sendMessage", {
+      chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
+      text: `⚠️ Mockery failed: ${result.error}`,
     });
   }
-
-  if (!initialized) {
-    await setSetting(env, "initialized", "1");
-    logStructured("info", "bot_initialized", {
-      target_username: env.TARGET_USERNAME,
-    });
-  }
-
-  logStructured("info", "poll_cycle_completed", {
-    target_username: env.TARGET_USERNAME,
-    new_post_count: newPosts.length,
-  });
-
-  return { count: newPosts.length };
 }
 
-async function verifyTargetPostExists(
-  env: Env,
-  postId: string
-): Promise<{ post: XPost; includesTweets: XPost[] } | null> {
-  const token = await getAccessToken(env);
-  const qs = new URLSearchParams({
-    "tweet.fields": "id,text,author_id,created_at,entities,referenced_tweets,in_reply_to_user_id",
-    expansions: "referenced_tweets.id",
-  });
-
-  const r = await xFetch(
-    `/2/tweets/${encodeURIComponent(postId)}?${qs.toString()}`,
-    token
-  );
-  if (r.status === 404) return null;
-
-  const data = await r.json() as {
-    data?: XPost;
-    includes?: { tweets?: XPost[] };
-    errors?: unknown;
-  };
-
-  if (!r.ok) throw new Error(`Post lookup failed: ${JSON.stringify(data)}`);
-  if (!data.data) return null;
-
-  return {
-    post: data.data,
-    includesTweets: data.includes?.tweets ?? [],
-  };
-}
-
-async function publishReply(
-  env: Env,
-  postId: string,
-  language: "zh" | "en"
-): Promise<{ id: string }> {
-  const row = await env.DB.prepare(
-    `SELECT d.zh,d.en,t.summoned,t.text
-     FROM drafts d JOIN target_posts t ON t.post_id=d.post_id
-     WHERE d.post_id=?`
-  ).bind(postId).first<{
-    zh: string;
-    en: string;
-    summoned: number;
-    text: string;
-  }>();
-
-  if (!row) throw new Error("Draft not found.");
-  if (!row.summoned) {
-    throw new Error("Safety guard: target post did not summon your account.");
-  }
-
-  const verified = await verifyTargetPostExists(env, postId);
-  if (!verified) throw new Error("Target post no longer exists.");
-  if (verified.post.author_id === undefined) throw new Error("Target author cannot be verified.");
-
-  const nowSummoned = await determineSummoned(
-    env,
-    verified.post,
-    verified.includesTweets
-  );
-  if (!nowSummoned) {
-    throw new Error("Safety guard: current target post no longer appears to summon your account.");
-  }
-
-  const text = language === "zh" ? row.zh : row.en;
-  if (!isLikelyWithinXLimit(text)) {
-    throw new Error("Draft rejected: too long for conservative X pre-check.");
-  }
-
-  const token = await getAccessToken(env);
-  const r = await xFetch("/2/tweets", token, {
-    method: "POST",
-    body: JSON.stringify({
-      text,
-      reply: { in_reply_to_tweet_id: postId }
-    }),
-  });
-
-  const data = await r.json() as { data?: { id?: string }; errors?: unknown };
-  if (!r.ok || !data.data?.id) {
-    logStructured("error", "x_publish_failed", {
-      post_id: postId,
-      language,
-      response: data,
-      status: r.status,
-    });
-    throw new Error(`X publish failed: ${JSON.stringify(data)}`);
-  }
-
-  await env.DB.prepare(
-    `UPDATE drafts
-     SET status='published', published_post_id=?, updated_at=unixepoch()
-     WHERE post_id=?`
-  ).bind(data.data.id, postId).run();
-
-  logStructured("info", "x_reply_published", {
-    in_reply_to_post_id: postId,
-    published_post_id: data.data.id,
-    language,
-    target_username: env.TARGET_USERNAME,
-  });
-
-  return { id: data.data.id };
+function isLikelyWithinXLimit(text: string): boolean {
+  return text.length <= 260;
 }
 
 async function webhookTelegram(request: Request, env: Env): Promise<Response> {
@@ -894,9 +511,9 @@ async function webhookTelegram(request: Request, env: Env): Promise<Response> {
     await sendTelegram(env, "sendMessage", {
       chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
       text: [
-        "✅ Chang Watch Bot online.",
+        "✅ Chang Mockery Bot online.",
         "",
-        "/check — run an immediate timeline check",
+        "/mockery — mock one post now",
         "/status — show bot status",
         "/auth — get the X authorization URL"
       ].join("\n")
@@ -904,32 +521,30 @@ async function webhookTelegram(request: Request, env: Env): Promise<Response> {
     return new Response("ok");
   }
 
-  if (update?.message?.text === "/check") {
+  if (update?.message?.text === "/mockery") {
     try {
-      logStructured("info", "telegram_command_check_started", {
+      logStructured("info", "telegram_command_mockery_started", {
         chat_id: chatId,
         target_username: env.TARGET_USERNAME,
       });
 
-      const result = await processNewPosts(env);
-      await sendTelegram(env, "sendMessage", {
-        chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
-        text: `🔎 Check complete. New posts recorded: ${result.count}`
-      });
+      const result = await processMockeryRound(env);
+      await notifyMockeryResult(env, result);
 
-      logStructured("info", "telegram_command_check_completed", {
+      logStructured("info", "telegram_command_mockery_completed", {
         chat_id: chatId,
-        new_posts: result.count,
+        mocked: result.mocked,
       });
     } catch (error) {
-      logStructured("error", "telegram_command_check_failed", {
+      logStructured("error", "telegram_command_mockery_failed", {
         chat_id: chatId,
         error: error instanceof Error ? error.message : String(error),
       });
 
       await sendTelegram(env, "sendMessage", {
         chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
-        text: `❌ Check failed:\n${error instanceof Error ? error.message : String(error)}`
+        text: `❌ Mockery failed:
+${error instanceof Error ? error.message : String(error)}`
       });
     }
     return new Response("ok");
@@ -955,6 +570,7 @@ async function webhookTelegram(request: Request, env: Env): Promise<Response> {
         `Target ID: ${targetId ?? "not resolved"}`,
         `Initialized: ${initialized ?? "0"}`,
         `X token: ${auth ? "present" : "missing"}`,
+        `Lookback: ${getLookubackDays(env)} days`,
         `Public URL: ${env.PUBLIC_BASE_URL}`
       ].join("\n")
     });
@@ -969,7 +585,8 @@ async function webhookTelegram(request: Request, env: Env): Promise<Response> {
 
     await sendTelegram(env, "sendMessage", {
       chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
-      text: `Authorize X here:\n${env.PUBLIC_BASE_URL}/auth/x`
+      text: `Authorize X here:
+${env.PUBLIC_BASE_URL}/auth/x`
     });
     return new Response("ok");
   }
@@ -1099,9 +716,9 @@ async function oauthCallback(request: Request, env: Env): Promise<Response> {
       "X authorization succeeded.",
       `Authenticated as @${me.username ?? me.name ?? me.id}.`,
       "",
-      `Target: @${env.TARGET_USERNAME}`,
+      `Now monitoring: @${env.TARGET_USERNAME}`,
       "",
-      "Next: use /check in Telegram or wait for the next Cron Trigger."
+      "Next: use /mockery in Telegram or wait for the next Cron Trigger."
     ].join("\n"),
     { headers: { "content-type": "text/plain; charset=utf-8" } }
   );
@@ -1113,6 +730,7 @@ async function health(env: Env): Promise<Response> {
     ok: db?.ok === 1,
     target: env.TARGET_USERNAME,
     cron: "*/5 * * * * (UTC)",
+    mockeries_available: criticsList.length,
   });
 }
 
@@ -1123,7 +741,7 @@ export default {
     ctx: ExecutionContext
   ): Promise<void> {
     ctx.waitUntil(
-      processNewPosts(env).catch((error) => {
+      processMockeryRound(env).catch((error) => {
         console.error("Cron failed:", error);
       })
     );
@@ -1141,7 +759,7 @@ export default {
         });
 
         return new Response(
-          "Chang Watch Bot is running. Use /health for status or /auth/x to authorize X.",
+          "Chang Mockery Bot is running. Use /health for status or /auth/x to authorize X.",
           { headers: { "content-type": "text/plain; charset=utf-8" } }
         );
       }
