@@ -500,7 +500,15 @@ async function webhookTelegram(request: Request, env: Env): Promise<Response> {
     update?.callback_query?.message?.chat?.id?.toString() ??
     "";
 
-  if (chatId !== env.TELEGRAM_ADMIN_CHAT_ID) return new Response("ok");
+  if (chatId !== env.TELEGRAM_ADMIN_CHAT_ID) {
+    // Logged (id only, no message text) so the correct admin chat id can be
+    // recovered from the logs when it is misconfigured.
+    logStructured("warn", "telegram_unknown_chat", {
+      chat_id: chatId,
+      configured_admin_chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
+    });
+    return new Response("ok");
+  }
 
   if (update?.message?.text === "/start") {
     logStructured("info", "telegram_command_start", {
@@ -536,15 +544,21 @@ async function webhookTelegram(request: Request, env: Env): Promise<Response> {
         mocked: result.mocked,
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       logStructured("error", "telegram_command_mockery_failed", {
         chat_id: chatId,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
 
+      // A notification failure must not turn the webhook call into a 500.
       await sendTelegram(env, "sendMessage", {
         chat_id: env.TELEGRAM_ADMIN_CHAT_ID,
         text: `❌ Mockery failed:
-${error instanceof Error ? error.message : String(error)}`
+${message}`
+      }).catch((notifyError) => {
+        logStructured("error", "telegram_failure_notify_failed", {
+          error: notifyError instanceof Error ? notifyError.message : String(notifyError),
+        });
       });
     }
     return new Response("ok");
@@ -797,7 +811,7 @@ export default {
           path: url.pathname,
           target_username: env.TARGET_USERNAME,
         });
-        return health(env);
+        return await health(env);
       }
 
       if (request.method === "GET" && url.pathname === "/auth/x") {
@@ -805,7 +819,7 @@ export default {
           path: url.pathname,
           target_username: env.TARGET_USERNAME,
         });
-        return oauthStart(env);
+        return await oauthStart(env);
       }
 
       if (request.method === "GET" && url.pathname === "/auth/x/callback") {
@@ -814,7 +828,7 @@ export default {
           target_username: env.TARGET_USERNAME,
           query_params: Object.fromEntries(new URL(request.url).searchParams.entries()),
         });
-        return oauthCallback(request, env);
+        return await oauthCallback(request, env);
       }
 
       if (request.method === "POST" && url.pathname === "/webhook/telegram") {
@@ -822,7 +836,7 @@ export default {
           path: url.pathname,
           target_username: env.TARGET_USERNAME,
         });
-        return webhookTelegram(request, env);
+        return await webhookTelegram(request, env);
       }
 
       logStructured("warn", "http_route_not_found", {
